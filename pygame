@@ -1,220 +1,200 @@
-import pygame
+import streamlit as st
 import random
-import sys
+import time
 
-# Khởi tạo Pygame
-pygame.init()
+# 1. Cấu hình trang và tiêu đề giao diện
+st.set_page_config(page_title="FNAF 1 - Streamlit Edition", page_icon="🐻", layout="centered")
+st.title("🐻 Five Nights at Freddy's 1 - Web App")
 
-# Cấu hình màn hình
-SCREEN_WIDTH = 800
-SCREEN_HEIGHT = 600
-screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT))
-pygame.display.set_caption("Five Nights at Freddy's 1 - Python Edition")
+# 2. Khởi tạo trạng thái Game (Session State) để giữ thông tin khi web tải lại
+if "game_started" not in st.session_state:
+    st.session_state.game_started = True
+    st.session_state.power = 100.0
+    st.session_state.time_am = 12
+    st.session_state.start_time = time.time()
+    st.session_state.last_tick = time.time()
+    st.session_state.last_freddy_move = time.time()
+    st.session_state.left_door = False
+    st.session_state.right_door = False
+    st.session_state.left_light = False
+    st.session_state.camera_open = False
+    st.session_state.current_cam = "CAM 1A (Sân khấu)"
+    st.session_state.freddy_pos = "CAM 1A"  # Vị trí: CAM 1A -> CAM 1B -> CAM 2A -> OFFICE
+    st.session_state.game_over = False
+    st.session_state.win = False
 
-# Màu sắc (Dùng làm hình nền tạm thời nếu không có ảnh)
-BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-GRAY = (50, 50, 50)
-RED = (200, 0, 0)
-GREEN = (0, 200, 0)
-BLUE = (0, 0, 200)
-YELLOW = (255, 255, 0)
+# Hàm reset game khi chơi lại
+def reset_game():
+    st.session_state.power = 100.0
+    st.session_state.time_am = 12
+    st.session_state.start_time = time.time()
+    st.session_state.last_tick = time.time()
+    st.session_state.last_freddy_move = time.time()
+    st.session_state.left_door = False
+    st.session_state.right_door = False
+    st.session_state.left_light = False
+    st.session_state.camera_open = False
+    st.session_state.current_cam = "CAM 1A (Sân khấu)"
+    st.session_state.freddy_pos = "CAM 1A"
+    st.session_state.game_over = False
+    st.session_state.win = False
 
-# Đồng hồ điều khiển FPS
-clock = pygame.time.Clock()
-FPS = 30
+# 3. Cập nhật Logic Game theo thời gian thực (Mỗi lần trang web rerun)
+current_now = time.time()
 
-# Font chữ
-font = pygame.font.SysFont("Arial", 24)
-large_font = pygame.font.SysFont("Arial", 50)
-
-# --- TRẠNG THÁI TRÒ CHƠI ---
-power = 100.0          # Phần trăm pin
-time_am = 12           # Thời gian bắt đầu (12 AM)
-game_over = False
-win = False
-
-left_door = False      # Cửa trái đóng/mở
-right_door = False     # Cửa phải đóng/mở
-left_light = False     # Đèn trái bật/tắt
-right_light = False    # Đèn phải bật/tắt
-
-camera_open = False    # Trạng thái mở camera
-current_cam = "CAM 1"  # Camera đang xem
-
-# Vị trí của Freddy: 1 (Sân khấu) -> 2 (Hành lang) -> 3 (Cạnh cửa trái) -> 4 (Trong phòng - Jumpscare)
-freddy_pos = 1 
-
-# --- SỰ KIỆN THEO THỜI GIAN (Custom Events) ---
-TICK_EVENT = pygame.USEREVENT + 1
-pygame.time.set_timer(TICK_EVENT, 1000) # Mỗi 1 giây chạy 1 lần
-
-FREDDY_EVENT = pygame.USEREVENT + 2
-pygame.time.set_timer(FREDDY_EVENT, 5000) # Mỗi 5 giây Freddy có cơ hội di chuyển
-
-# Hàm vẽ nút bấm
-def draw_button(text, rect, color, text_color=WHITE):
-    pygame.draw.rect(screen, color, rect)
-    pygame.draw.rect(screen, WHITE, rect, 2)
-    txt = font.render(text, True, text_color)
-    screen.blit(txt, (rect[0] + (rect[2] - txt.get_width())//2, rect[1] + (rect[3] - txt.get_height())//2))
-
-# --- VÒNG LẶP CHÍNH CỦA TRÒ CHƠI ---
-running = True
-sec_counter = 0
-
-while running:
-    screen.fill(BLACK)
+if not st.session_state.game_over and not st.session_state.win:
+    # Tính thời gian trôi qua kể từ lần cập nhật trước
+    elapsed_tick = current_now - st.session_state.last_tick
+    st.session_state.last_tick = current_now
     
-    # 1. XỬ LÝ SỰ KIỆN (INPUT)
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            running = False
-            
-        if not game_over and not win:
-            # Sự kiện đếm giây (Pin và Thời gian)
-            if event.type == TICK_EVENT:
-                # Tính lượng pin tiêu thụ dựa trên các thiết bị đang bật
-                drain = 0.1 # Tiêu hao cơ bản
-                if left_door: drain += 0.5
-                if right_door: drain += 0.5
-                if left_light: drain += 0.3
-                if right_light: drain += 0.3
-                if camera_open: drain += 0.4
-                
-                power -= drain
-                if power <= 0:
-                    power = 0
-                    game_over = True # Hết pin = Thua (Freddy đến)
+    # Tính toán lượng pin tiêu thụ dựa trên thiết bị đang mở
+    drain_rate = 0.15  # Tiêu thụ cơ bản
+    if st.session_state.left_door: drain_rate += 0.5
+    if st.session_state.right_door: drain_rate += 0.5
+    if st.session_state.left_light: drain_rate += 0.3
+    if st.session_state.camera_open: drain_rate += 0.4
+    
+    st.session_state.power -= drain_rate * elapsed_tick
+    if st.session_state.power <= 0:
+        st.session_state.power = 0
+        st.session_state.game_over = True
 
-                # Cập nhật thời gian (Mỗi 45 giây thực tế lên 1 tiếng trong game)
-                sec_counter += 1
-                if sec_counter >= 45:
-                    sec_counter = 0
-                    if time_am == 12:
-                        time_am = 1
-                    else:
-                        time_am += 1
-                    if time_am == 6:
-                        win = True
+    # Cập nhật số giờ AM (Mỗi 30 giây thực tế lên 1 tiếng trong game)
+    total_elapsed = current_now - st.session_state.start_time
+    calculated_hour = 12 + int(total_elapsed / 30)
+    if calculated_hour > 12:
+        calculated_hour -= 12
+    st.session_state.time_am = calculated_hour
+    
+    if total_elapsed >= 180:  # Sống sót 3 phút = Thắng
+        st.session_state.win = True
 
-            # Sự kiện Freddy di chuyển
-            if event.type == FREDDY_EVENT and not camera_open:
-                # AI của Freddy: Tỉ lệ 50% di chuyển tiến lên
-                if random.randint(1, 100) > 50:
-                    if freddy_pos < 3:
-                        freddy_pos += 1
-                    elif freddy_pos == 3:
-                        # Nếu đang ở sát cửa trái mà cửa đóng -> Bị bật lại sân khấu
-                        if left_door:
-                            freddy_pos = 1
-                        else:
-                            freddy_pos = 4 # Vào phòng -> Jumpscare!
-
-            # Sự kiện Click chuột
-            if event.type == pygame.MOUSEBUTTONDOWN:
-                mx, my = pygame.mouse.get_pos()
-                
-                if not camera_open:
-                    # Click nút Cửa trái
-                    if 20 <= mx <= 100 and 200 <= my <= 250:
-                        left_door = not left_door
-                    # Click nút Đèn trái
-                    if 20 <= mx <= 100 and 270 <= my <= 320:
-                        left_light = not left_light
-                    # Click nút Cửa phải
-                    if 700 <= mx <= 780 and 200 <= my <= 250:
-                        right_door = not right_door
-                    # Click nút Đèn phải
-                    if 700 <= mx <= 780 and 270 <= my <= 320:
-                        right_light = not right_light
+    # AI của Freddy di chuyển (Mỗi 7 giây kiểm tra tỉ lệ di chuyển một lần)
+    if current_now - st.session_state.last_freddy_move > 7:
+        st.session_state.last_freddy_move = current_now
+        if random.randint(1, 100) > 40:  # 60% tỉ lệ tiến lên
+            if st.session_state.freddy_pos == "CAM 1A":
+                st.session_state.freddy_pos = "CAM 1B"
+            elif st.session_state.freddy_pos == "CAM 1B":
+                st.session_state.freddy_pos = "CAM 2A"
+            elif st.session_state.freddy_pos == "CAM 2A":
+                if st.session_state.left_door:
+                    st.session_state.freddy_pos = "CAM 1A"  # Bị chặn quay về sân khấu
                 else:
-                    # Chọn các phòng Camera
-                    if 500 <= mx <= 600 and 400 <= my <= 450: current_cam = "CAM 1"
-                    if 620 <= mx <= 720 and 400 <= my <= 450: current_cam = "CAM 2"
-                    if 500 <= mx <= 600 and 470 <= my <= 520: current_cam = "CAM 3"
+                    st.session_state.freddy_pos = "OFFICE"  # Đột nhập thành công
+                    st.session_state.game_over = True
 
-                # Click nút Bật/Tắt Hệ thống Camera (Nút lớn ở dưới cùng)
-                if 300 <= mx <= 500 and 530 <= my <= 580:
-                    camera_open = not camera_open
+# 4. GIAO DIỆN HIỂN THỊ TRÊN WEB (RENDER)
+if st.session_state.game_over:
+    st.error("💀 GAME OVER! FREDDY ĐÃ TẤN CÔNG BẠN TRONG BÓNG TỐI!")
+    if st.button("Chơi Lại", on_click=reset_game):
+        st.rerun()
 
-    # 2. XỬ LÝ LOGIC TRONG GAME
-    if freddy_pos == 4:
-        game_over = True
+elif st.session_state.win:
+    st.success("🎉 6 AM! BẠN ĐÃ SỐNG SÓT QUA ĐÊM KINH HOÀNG!")
+    if st.button("Chơi Lại", on_click=reset_game):
+        st.rerun()
 
-    # 3. VẼ GIAO DIỆN (RENDER)
-    if not game_over and not win:
-        if not camera_open:
-            # --- MÀN HÌNH CHÍNH (VĂN PHÒNG BẢO VỆ) ---
-            # Vẽ nền văn phòng (Thay đổi màu tùy thuộc vào Đèn)
-            office_color = (30, 30, 30)
-            if left_light and freddy_pos == 3:
-                office_color = (150, 50, 50) # Hiện màu đỏ nếu Freddy ở cửa trái và bật đèn
-            elif left_light or right_light:
-                office_color = (80, 80, 80)
-            pygame.draw.rect(screen, office_color, (120, 100, 560, 400))
-            
-            # Vẽ trạng thái Cửa
-            if left_door: pygame.draw.rect(screen, RED, (120, 100, 30, 400))  # Cửa trái đóng
-            if right_door: pygame.draw.rect(screen, RED, (650, 100, 30, 400)) # Cửa phải đóng
+else:
+    # HIỂN THỊ THÔNG SỐ SỐNG CÒN (HUD)
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric(label="🔋 Năng lượng pin còn lại", value=f"{max(0, int(st.session_state.power))}%")
+    with col2:
+        st.metric(label="⏰ Thời gian hiện tại", value=f"{st.session_state.time_am} AM")
 
-            # Vẽ các nút điều khiển bên Trái
-            draw_button("DOOR", (20, 200, 80, 50), GREEN if left_door else GRAY)
-            draw_button("LIGHT", (20, 270, 80, 50), YELLOW if left_light else GRAY)
-            
-            # Vẽ các nút điều khiển bên Phải
-            draw_button("DOOR", (700, 200, 80, 50), GREEN if right_door else GRAY)
-            draw_button("LIGHT", (700, 270, 80, 50), YELLOW if right_light else GRAY)
-            
-            # Gợi ý văn phòng
-            txt = font.render("Chế độ văn phòng (Đang nhìn thẳng)", True, WHITE)
-            screen.blit(txt, (260, 120))
-            
+    # MỨC ĐỘ TIÊU THỤ ĐIỆN
+    usage = 1 + int(st.session_state.left_door) + int(st.session_state.right_door) + int(st.session_state.left_light) + int(st.session_state.camera_open)
+    st.text(f"Mức tiêu thụ điện: {'⚡' * usage}")
+
+    st.divider()
+
+    # CHẾ ĐỘ 1: ĐANG BẬT MÀN HÌNH CAMERA GÌÁM SÁT
+    if st.session_state.camera_open:
+        st.subheader(st.session_state.current_cam)
+        
+        # Logic hiển thị tình trạng các phòng qua Camera
+        if "1A" in st.session_state.current_cam:
+            if st.session_state.freddy_pos == "CAM 1A":
+                st.warning("⚠️ Đèn flash quét qua: Phát hiện Gấu Freddy đang nhìn chằm chằm vào Camera!")
+            else:
+                st.info("Sân khấu trống không. Animatronic đã rời đi...")
+        elif "1B" in st.session_state.current_cam:
+            if st.session_state.freddy_pos == "CAM 1B":
+                st.warning("⚠️ Tiếng động lớn ở khu ăn uống! Một bóng đen to lớn đang đứng giữa các bàn ăn.")
+            else:
+                st.info("Khu vực ăn uống tối đen, không phát hiện chuyển động.")
+        elif "2A" in st.session_state.current_cam:
+            if st.session_state.freddy_pos == "CAM 2A":
+                st.error("🚨 NGUY HIỂM: Gấu Freddy đang chạy dọc hành lang trái về phía văn phòng của bạn!!!")
+            else:
+                st.info("Hành lang trái vắng lặng.")
+
+        # Bản đồ nút chọn phòng Camera
+        st.write("**Chọn Kênh Giám Sát:**")
+        cam_col1, cam_col2, cam_col3 = st.columns(3)
+        with cam_col1:
+            if st.button("CAM 1A (Sân khấu)", use_container_width=True):
+                st.session_state.current_cam = "CAM 1A (Sân khấu)"
+        with cam_col2:
+            if st.button("CAM 1B (Khu ăn uống)", use_container_width=True):
+                st.session_state.current_cam = "CAM 1B (Khu ăn uống)"
+        with cam_col3:
+            if st.button("CAM 2A (Hành lang trái)", use_container_width=True):
+                st.session_state.current_cam = "CAM 2A (Hành lang trái)"
+
+    # CHẾ ĐỘ 2: ĐANG Ở VĂN PHÒNG BẢO VỆ
+    else:
+        st.subheader("🖥️ Góc nhìn văn phòng")
+        
+        # Cảnh báo đèn/tiếng động
+        if st.session_state.left_light:
+            if st.session_state.freddy_pos == "CAM 2A":
+                st.error("😱 CÓ BÓNG NGƯỜI ĐỨNG BÊN NGOÀI CỬA SỔ TRÁI!!! ĐÓNG CỬA NGAY!!!")
+            else:
+                st.info("Đèn trái đang bật: Hành lang bên ngoài trống rỗng.")
         else:
-            # --- MÀN HÌNH CAMERA ---
-            pygame.draw.rect(screen, (10, 20, 10), (50, 50, 700, 450)) # Khung màn hình cam
-            
-            # Hiển thị nội dung dựa trên Camera được chọn và Vị trí của Freddy
-            cam_info = f"Đang xem: {current_cam}"
-            status_txt = "Phòng trống / Không thấy gì"
-            
-            if current_cam == "CAM 1":
-                status_txt = "SÂN KHẤU: " + ("Freddy đang ở đây!" if freddy_pos == 1 else "Sân khấu trống trơn!")
-            elif current_cam == "CAM 2":
-                status_txt = "HÀNH LANG: " + ("Có bóng người đang tiến lại!" if freddy_pos == 2 else "Hành lang tối đen.")
-            elif current_cam == "CAM 3":
-                status_txt = "GẦN CỬA TRÁI: " + ("CẢNH BÁO: Hắn đang ở ngay ngoài cửa!" if freddy_pos == 3 else "Khu vực an toàn.")
+            st.text("Hành lang hai bên tối om. Hãy bật đèn kiểm tra nếu nghe tiếng bước chân.")
 
-            # Vẽ thông tin Camera lên màn hình
-            screen.blit(font.render(cam_info, True, GREEN), (70, 70))
-            screen.blit(font.render(status_txt, True, RED if "CẢNH BÁO" in status_txt else WHITE), (70, 110))
-            
-            # Vẽ các nút chuyển đổi Camera (Bản đồ thu nhỏ)
-            draw_button("CAM 1", (500, 400, 100, 50), BLUE if current_cam == "CAM 1" else GRAY)
-            draw_button("CAM 2", (620, 400, 100, 50), BLUE if current_cam == "CAM 2" else GRAY)
-            draw_button("CAM 3", (500, 470, 100, 50), BLUE if current_cam == "CAM 3" else GRAY)
+        # Hiển thị trạng thái vật lý của Cửa
+        st.write(f"Cửa Trái: {'🟥 ĐÃ ĐÓNG THẮT' if st.session_state.left_door else '🟩 ĐANG MỞ'}")
+        st.write(f"Cửa Phải: {'🟥 ĐÃ ĐÓNG THẮT' if st.session_state.right_door else '🟩 ĐANG MỞ'}")
 
-        # CẬP NHẬT HUD (Thông tin chung: Pin & Thời gian)
-        draw_button("MỞ/TẮT CAMERA", (300, 530, 200, 50), BLUE if camera_open else GRAY)
-        
-        power_txt = font.render(f"Power: {round(power, 1)}%", True, GREEN if power > 30 else RED)
-        time_txt = font.render(f"Time: {time_am} AM", True, WHITE)
-        screen.blit(power_txt, (20, 20))
-        screen.blit(time_txt, (680, 20))
+        # Các nút bấm tương tác tại văn phòng
+        ctrl_col1, ctrl_col2 = st.columns(2)
+        with ctrl_col1:
+            st.button(
+                "Đóng/Mở Cửa Trái 🚪", 
+                key="btn_l_door", 
+                on_click=lambda: setattr(st.session_state, 'left_door', not st.session_state.left_door),
+                use_container_width=True
+            )
+            st.button(
+                "Bật/Tắt Đèn Trái 💡", 
+                key="btn_l_light", 
+                on_click=lambda: setattr(st.session_state, 'left_light', not st.session_state.left_light),
+                use_container_width=True
+            )
+        with ctrl_col2:
+            st.button(
+                "Đóng/Mở Cửa Phải 🚪", 
+                key="btn_r_door", 
+                on_click=lambda: setattr(st.session_state, 'right_door', not st.session_state.right_door),
+                use_container_width=True
+            )
+            st.text("Hệ thống điện bên phải hoạt động bình thường.")
 
-    # --- MÀN HÌNH KẾT THÚC (THẮNG / THUA) ---
-    elif game_over:
-        screen.fill(BLACK)
-        jumpscare_txt = large_font.render("FREDDY JUMPSCARE! GAME OVER", True, RED)
-        screen.blit(jumpscare_txt, (SCREEN_WIDTH//2 - jumpscare_txt.get_width()//2, SCREEN_HEIGHT//2 - 50))
-        
-    elif win:
-        screen.fill(BLACK)
-        win_txt = large_font.render("6 AM - YOU WIN!", True, GREEN)
-        screen.blit(win_txt, (SCREEN_WIDTH//2 - win_txt.get_width()//2, SCREEN_HEIGHT//2 - 50))
+    st.divider()
+    
+    # NÚT CHUYỂN ĐỔI CHẾ ĐỘ CAMERA / VĂN PHÒNG LỚN Ở DƯỚI CÙNG
+    st.button(
+        "📂 BẬT / HẠ MÀN HÌNH CAMERA GIÁM SÁT", 
+        key="toggle_cam", 
+        on_click=lambda: setattr(st.session_state, 'camera_open', not st.session_state.camera_open),
+        use_container_width=True,
+        type="primary"
+    )
 
-    pygame.display.flip()
-    clock.tick(FPS)
-
-pygame.quit()
-sys.exit()
+    # 5. Kích hoạt tự động làm mới trang web (Tick rate) sau mỗi 0.8 giây để tạo chuyển động thời gian thực
+    time.sleep(0.8)
+    st.rerun()
